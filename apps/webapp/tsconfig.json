@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client", "vitest/globals", "node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@cydo/auth": ["../../packages/auth/src/core/index.ts"],
+      "@cydo/auth/client": ["../../packages/auth/src/client/index.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@cydo/auth": ["../../packages/auth/src/core/index.ts"],
+      "@cydo/auth/server": ["../../packages/auth/src/server/index.ts"]
+    }
+  },
+  "include": ["src", "tests", "scripts", "tsup.config.ts", "vitest.config.ts"]
+}
