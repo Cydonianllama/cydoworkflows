@@ -33,6 +33,11 @@ const envSchema = z.object({
 
   RESEND_API_KEY: z.string().default(""),
   RESEND_FROM: z.string().default("Cydo <no-reply@cydo.app>"),
+
+  /** Cadencia del tick del scheduler de cron triggers (ms). */
+  SCHEDULER_TICK_MS: z.coerce.number().int().min(1000).default(30_000),
+  /** Máximo de nodos que recorre el pipeline en una sola ejecución. */
+  PIPELINE_MAX_STEPS: z.coerce.number().int().min(1).default(50),
 })
 
 const parsed = envSchema.safeParse(process.env)

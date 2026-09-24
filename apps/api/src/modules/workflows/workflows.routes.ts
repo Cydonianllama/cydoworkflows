@@ -16,6 +16,7 @@ import {
   publishWorkflowHandler,
   restoreWorkflowVersionHandler,
   revertWorkflowChangesHandler,
+  runWorkflowHandler,
   saveWorkflowGraphHandler,
   updateWorkflowHandler,
 } from "./workflows.controller"
@@ -23,6 +24,7 @@ import {
   createWorkflowSchema,
   listWorkflowVersionsQuerySchema,
   listWorkflowsQuerySchema,
+  runWorkflowSchema,
   saveWorkflowGraphSchema,
   updateWorkflowSchema,
   workflowIdParamSchema,
@@ -86,6 +88,15 @@ workflowsRouter.post(
   requirePermission("workflow:update"),
   validate(workflowIdParamSchema, "params"),
   asyncHandler(publishWorkflowHandler),
+)
+
+workflowsRouter.post(
+  "/:id/run",
+  requireNotRestricted,
+  requirePermission("workflow:update"),
+  validate(workflowIdParamSchema, "params"),
+  validate(runWorkflowSchema),
+  asyncHandler(runWorkflowHandler),
 )
 
 workflowsRouter.get(

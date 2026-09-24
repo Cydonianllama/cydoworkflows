@@ -8,6 +8,19 @@ export default defineConfig({
     alias: [
       { find: "@cydo/auth/server", replacement: resolvePath("../../packages/auth/src/server/index.ts") },
       { find: "@cydo/auth", replacement: resolvePath("../../packages/auth/src/core/index.ts") },
+      {
+        find: "@cydo/workflow-engine/server",
+        replacement: resolvePath("../../packages/workflow-engine/src/server/index.ts"),
+      },
+      { find: "@cydo/workflow-engine", replacement: resolvePath("../../packages/workflow-engine/src/core/index.ts") },
+      {
+        find: "@cydo/workflow-pipeline/server",
+        replacement: resolvePath("../../packages/workflow-pipeline/src/server/index.ts"),
+      },
+      {
+        find: "@cydo/workflow-pipeline",
+        replacement: resolvePath("../../packages/workflow-pipeline/src/core/index.ts"),
+      },
     ],
   },
   test: {

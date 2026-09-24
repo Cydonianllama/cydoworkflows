@@ -6,7 +6,11 @@
     "baseUrl": ".",
     "paths": {
       "@cydo/auth": ["../../packages/auth/src/core/index.ts"],
-      "@cydo/auth/server": ["../../packages/auth/src/server/index.ts"]
+      "@cydo/auth/server": ["../../packages/auth/src/server/index.ts"],
+      "@cydo/workflow-engine": ["../../packages/workflow-engine/src/core/index.ts"],
+      "@cydo/workflow-engine/server": ["../../packages/workflow-engine/src/server/index.ts"],
+      "@cydo/workflow-pipeline": ["../../packages/workflow-pipeline/src/core/index.ts"],
+      "@cydo/workflow-pipeline/server": ["../../packages/workflow-pipeline/src/server/index.ts"]
     }
   },
   "include": ["src", "tests", "scripts", "tsup.config.ts", "vitest.config.ts"]

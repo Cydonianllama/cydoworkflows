@@ -1,6 +1,6 @@
 # AGENTS.md — Mapa del monorepo `cydo-workflows`
 
-Monorepo **pnpm** con dos aplicaciones y un paquete compartido. Este documento es el mapa de
+Monorepo **pnpm** con dos aplicaciones y tres paquetes compartidos. Este documento es el mapa de
 referencia para agentes y personas: dónde vive cada cosa, qué reglas no se rompen y cómo se
 conectan las piezas.
 
@@ -15,7 +15,9 @@ cydo-workflows/
 ├─ tsconfig.base.json         # config TypeScript compartida
 ├─ AGENTS.md
 ├─ packages/
-│  └─ auth/                   # @cydo/auth — núcleo de auth + adapters
+│  ├─ auth/                   # @cydo/auth — núcleo de auth + adapters
+│  ├─ workflow-engine/        # @cydo/workflow-engine — validación y registro de triggers (cron/webhook)
+│  └─ workflow-pipeline/      # @cydo/workflow-pipeline — recorrido de nodos (executors por DI)
 └─ apps/
    ├─ api/                    # @cydo/api — Express + Mongoose
    └─ webapp/                 # @cydo/webapp — Vite + React + Tailwind + shadcn
@@ -24,7 +26,9 @@ cydo-workflows/
 | Paquete | Nombre | Responsabilidad |
 |---|---|---|
 | `packages/auth` | `@cydo/auth` | Núcleo de autenticación isomórfico (contratos, DTOs, reglas) + adapters. **No conoce** Mongo, Express, Resend ni Google. |
-| `apps/api` | `@cydo/api` | API REST. Implementa los adapters de `@cydo/auth` y expone los módulos de negocio. |
+| `packages/workflow-engine` | `@cydo/workflow-engine` | Valida y registra triggers de workflows (cron + webhooks). **No conoce** Mongo, Express ni el recorrido de nodos. |
+| `packages/workflow-pipeline` | `@cydo/workflow-pipeline` | Recorre los nodos de un workflow. Los executors de cada tipo de nodo se **inyectan por DI**. |
+| `apps/api` | `@cydo/api` | API REST. Implementa los adapters de `@cydo/auth`, `@cydo/workflow-engine` y `@cydo/workflow-pipeline`, y expone los módulos de negocio. |
 | `apps/webapp` | `@cydo/webapp` | SPA. Consume `@cydo/auth/client` y la API vía `lib/api`. |
 
 ---
@@ -44,7 +48,9 @@ pnpm api seed:user           # crea un usuario verificado para entrar sin OTP
 pnpm webapp dev              # sólo el webapp
 pnpm auth typecheck          # sólo un paquete
 
-pnpm --filter @cydo/api test # exec puntual
+pnpm --filter @cydo/api test                # exec puntual
+pnpm --filter @cydo/workflow-engine test    # tests del engine de triggers
+pnpm --filter @cydo/workflow-pipeline test  # tests del pipeline
 ```
 
 Entorno: **Node ≥ 20**, **pnpm ≥ 9**.
@@ -122,38 +128,85 @@ los controllers, ni el webapp.
 
 ---
 
-## 4. `apps/api` (`@cydo/api`)
+## 4. `packages/workflow-engine` + `packages/workflow-pipeline`
+
+Ambos son núcleos **sin infraestructura** (no conocen Mongo ni Express). Convergen en `apps/api`
+vía `setup/container.ts` para iniciar la ejecución.
+
+### `@cydo/workflow-engine` — validación y registro de triggers
+
+```
+packages/workflow-engine/src/
+├─ core/
+│  ├─ models.ts          # TriggerKind, CronTriggerRegistration, WebhookTriggerRegistration,
+│  │                     # ManualTriggerRegistration, TriggerNode, WorkflowRef
+│  ├─ validation.ts      # scheduleTriggerConfigSchema (cron + timezone), triggerWebhookConfigSchema (token)
+│  ├─ errors.ts          # EngineError + códigos (INVALID_CRON, INVALID_TIMEZONE, TRIGGER_NOT_FOUND, …)
+│  └─ contracts/ports.ts # TriggerRegistryPort, CryptoPort, ClockPort
+└─ server/
+   ├─ cron.ts            # isValidCron / isValidTimezone / nextCronRun (cron-parser v5)
+   └─ WorkflowTriggerEngine.ts  # extractTriggers, syncWorkflowTriggers, resolveWebhook, validateNode
+```
+
+- Los nodos trigger reconocidos son `node:scheduletrigger` (cron), `node:triggerwebhook` (webhook)
+  y `node:triggeronclick` (manual).
+- Si un webhook no trae `token`, el engine lo genera vía `CryptoPort.randomToken`.
+- Opera sobre la **versión publicada** del workflow (ver §5).
+
+### `@cydo/workflow-pipeline` — recorrido de nodos
+
+```
+packages/workflow-pipeline/src/
+├─ core/
+│  ├─ types.ts     # PipelineNode, RunContext, NodeExecutorRegistry, RunResult, RunStep, RunnerOptions
+│  ├─ events.ts    # RunEvents (onRunStart/onNodeStart/onNodeComplete/onNodeError/onRunFinish)
+│  └─ errors.ts    # PipelineError (NODE_NOT_FOUND, RUN_LIMIT_REACHED, NODE_EXECUTION_FAILED, …)
+└─ server/
+   └─ PipelineRunner.ts  # BFS con `visited`, MAX_STEPS=50, AbortSignal; sin executor sigue nextNode
+```
+
+- Los executors de cada tipo de nodo se **inyectan por DI** (`new PipelineRunner(registry, options)`).
+  Por ahora el registry está vacío y el runner usa el fallback `node.nextNode` para todos los tipos.
+- `NodeExecutor` recibe `(node, { context, signal })` y devuelve `{ nextNodeIds?, output? }`.
+
+---
+
+## 5. `apps/api` (`@cydo/api`)
 
 ```
 apps/api/src/
-├─ index.ts               # bootstrap: connectDb → createApp → listen → graceful shutdown
+├─ index.ts               # bootstrap: connectDb → startWorkflowRuntime → createApp → listen → shutdown
 ├─ setup/
 │  ├─ app.ts              # express app: helmet, cors, cookieParser, json, routers, errorHandler
 │  ├─ env.ts              # validación zod de process.env (falla rápido)
 │  ├─ db.ts               # conexión mongoose
-│  ├─ container.ts        # wiring puertos → adapters
+│  ├─ container.ts        # wiring puertos → adapters (auth + engine + pipeline)
 │  ├─ response.ts         # sendOk / sendCreated / sendList + buildPagination
 │  ├─ sessionCookies.ts   # set/clear/read de las cookies de sesión
-│  └─ adapters/           # Mongo repos, Resend, bcrypt, JWT, Google, node crypto, clock
+│  └─ adapters/           # Mongo repos, Resend, bcrypt, JWT, Google, node crypto, clock,
+│                         # MongoTriggerRegistry, CronScheduler, RunPersistence
 ├─ middleware/
 │  ├─ requireAuth.ts           # cookie → JWT → req.user
 │  ├─ requireVerified.ts       # email verificado
 │  ├─ requireNotRestricted.ts  # bloquea escrituras a miembros restringidos
 │  ├─ requirePermission.ts     # requirePermission('workflow:create') usando can()
 │  ├─ validate.ts              # validate(schema, 'body'|'query'|'params')
-│  └─ errorHandler.ts          # AuthError / ZodError / Mongo → ResponseApi
+│  └─ errorHandler.ts          # AuthError / ZodError / EngineError / Mongo → ResponseApi
 ├─ modules/
 │  ├─ auth/          # model.ts (User, RefreshToken) · dto.ts · controller.ts · routes.ts
 │  ├─ onboarding/    # dto · controller · routes
 │  ├─ users/         # perfil y resumen de cuenta
-│  ├─ workflows/     # model · dto · service · controller · routes
+│  ├─ workflows/     # models (Workflow, Graph, Version, Run, Trigger) · dto · service ·
+│  │                 # execution (executeWorkflow + runtime cron) · controller · routes
+│  ├─ webhooks/      # POST /hooks/:token → resuelve webhook y ejecuta el workflow
 │  └─ members/       # model (Invite) · dto · service · controller · routes
 ├─ types/express.d.ts # augmentation de Request con `user`
 └─ utils/             # asyncHandler, duration, regex, account
 ```
 
-Todos los routers se montan bajo **`/api/v1`**. Todas las respuestas usan el sobre
-`{ status, data, message?, pagination? }`.
+Los routers de negocio se montan bajo **`/api/v1`**; el ingreso de webhooks (`/hooks`) vive
+**fuera** del prefijo (autenticación por token en la URL, no por cookie). Todas las respuestas
+usan el sobre `{ status, data, message?, pagination? }`.
 
 ### Endpoints
 
@@ -172,7 +225,18 @@ Todos los routers se montan bajo **`/api/v1`**. Todas las respuestas usan el sob
 | `PATCH` | `/users/me` | sesión |
 | `GET` | `/workflows?page&limit&search` | `workflow:read` |
 | `POST` | `/workflows` | `workflow:create` + no restringido |
+| `PATCH` | `/workflows/:id` | `workflow:update` + no restringido |
 | `DELETE` | `/workflows/:id` | `workflow:delete` + no restringido |
+| `GET` | `/workflows/:id` | `workflow:read` |
+| `GET` | `/workflows/:id/graph` | `workflow:read` |
+| `PUT` | `/workflows/:id/graph` | `workflow:update` + no restringido |
+| `POST` | `/workflows/:id/publish` | `workflow:update` + no restringido |
+| `POST` | `/workflows/:id/run` | `workflow:update` + no restringido → ejecuta la versión publicada |
+| `GET` | `/workflows/:id/versions` | `workflow:read` |
+| `GET` | `/workflows/:id/versions/:version` | `workflow:read` |
+| `POST` | `/workflows/:id/versions/:version/restore` | `workflow:update` + no restringido |
+| `POST` | `/workflows/:id/revert` | `workflow:update` + no restringido |
+| `POST` | `/hooks/:token` | público (webhook) → ejecuta el workflow registrado |
 | `GET` | `/members` | `member:invite` |
 | `POST` | `/members/invite` | `member:invite` |
 | `PATCH` | `/members/:id/role` | `member:role` |
@@ -189,12 +253,16 @@ y se usa para scopear workflows y miembros.
 
 - `User`: email, provider (`local|google`), passwordHash, otp, profile, accountOwnerId, roleInAccount, status, onboardingCompleted
 - `RefreshToken`: userId, tokenHash, familyId, expiresAt, revokedAt (rotación + reuse detection)
-- `Workflow`: ownerId, name, createdBy
+- `Workflow`: ownerId, name, createdBy, status (`draft|published`), version, publishedAt, hasUnpublishedChanges
+- `WorkflowGraph`: workflowId, ownerId, nodes (lista plana; la topología vive en `node.nextNode`)
+- `WorkflowVersion`: snapshot inmutable de `nodes` por cada `publish` (`workflowId + version` único)
+- `WorkflowRun`: workflowId, ownerId, version, trigger, status (`running|success|failed|limit|cancelled`), steps, error
+- `TriggerRegistration`: workflowId, ownerId, version, nodeId, kind (`cron|webhook|manual`), cron/timezone o webhookToken
 - `Invite`: email, accountOwnerId, roleInAccount, tokenHash, expiresAt, status
 
 ---
 
-## 5. `apps/webapp` (`@cydo/webapp`)
+## 6. `apps/webapp` (`@cydo/webapp`)
 
 ```
 apps/webapp/src/
@@ -248,7 +316,7 @@ modules/{modulo}/
 - `store/` define el **contrato** (`*.contract.ts`) sin mencionar la librería; `*.zustand.ts` es
   el único archivo que importa `zustand`; el resto del módulo consume `useXStore()` vía context.
 - `catalog/` sólo alimenta selects **a través de compositions**; un componente nunca lo consulta.
-- Los módulos son herméticos: **no** se importan entre sí (ver §6).
+- Los módulos son herméticos: **no** se importan entre sí (ver §7).
 
 ### `lib/api` — convención de endpoints
 
@@ -276,7 +344,7 @@ export const listWorkflowsRequest = async (
 
 ---
 
-## 6. Comunicación entre módulos (EventBus)
+## 7. Comunicación entre módulos (EventBus)
 
 Los módulos **no se importan entre sí**. Cuando ocurre un hecho que puede interesar a otros, se
 publica en el bus (`lib/eventBus`):
@@ -302,7 +370,7 @@ Eventos actuales: `auth.user.registered`, `auth.user.verified`, `auth.session.st
 
 ---
 
-## 7. Variables de entorno
+## 8. Variables de entorno
 
 Cada app tiene su `.env` (ignorado por git) y su `.env.example` versionado.
 
@@ -310,7 +378,8 @@ Cada app tiene su `.env` (ignorado por git) y su `.env.example` versionado.
 del URI si está definido), `CORS_ORIGIN`, `WEBAPP_URL`, `JWT_ACCESS_SECRET`,
 `JWT_REFRESH_SECRET`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `COOKIE_SECURE`,
 `OTP_TTL_MINUTES`, `OTP_MAX_ATTEMPTS`, `OTP_RESEND_COOLDOWN_SECONDS`, `OTP_DIGITS`,
-`GOOGLE_CLIENT_ID`, `RESEND_API_KEY`, `RESEND_FROM`.
+`GOOGLE_CLIENT_ID`, `RESEND_API_KEY`, `RESEND_FROM`, `SCHEDULER_TICK_MS`,
+`PIPELINE_MAX_STEPS`.
 
 **`apps/webapp/.env`** — `VITE_API_URL`, `VITE_GOOGLE_CLIENT_ID`.
 
@@ -323,7 +392,7 @@ Notas de desarrollo:
 
 ---
 
-## 8. Flujos
+## 9. Flujos
 
 1. **Registro** → `POST /auth/register` (envía OTP) → `/verify-otp` → cookies emitidas →
    `onboardingCompleted=false` → `/onboarding`.
@@ -333,16 +402,31 @@ Notas de desarrollo:
    → emails de invitación → emite `onboarding.completed` → `/`.
 4. **Invitación** → email con `${WEBAPP_URL}/accept-invite/:token` → `POST /invites/:token/accept`
    crea el miembro vinculado al dueño y abre sesión (sin onboarding).
-5. **Workflows** → crear (sólo nombre), listar con `page/limit/search`, eliminar con
-   `ConfirmProvider` + `DELETE /workflows/:id`.
+5. **Workflows** → crear (sólo nombre), listar con `page/limit/search`, editar grafo, publicar
+   (snapshot a `WorkflowVersion` + sync de triggers en el engine), ejecutar (`POST /run`) y
+   eliminar con `ConfirmProvider` + `DELETE /workflows/:id`.
 6. **Settings** → invitar, restringir (modo lectura) y eliminar miembros; también cambiar rol.
+
+### Ejecución de workflows
+
+El **publish** sincroniza los triggers en `TriggerRegistration` (engine). A partir de ahí hay tres
+entradas de ejecución, todas convergiendo en `executeWorkflow` (`modules/workflows/workflows.execution.ts`),
+que carga la **versión publicada** y la inyecta al `PipelineRunner`:
+
+1. **Manual** → `POST /api/v1/workflows/:id/run` (body opcional `{ nodeId }`; si falta, usa el primer
+   `node:triggeronclick`).
+2. **Webhook** → `POST /hooks/:token` → `engine.resolveWebhook(token)` → ejecuta con el payload del body.
+3. **Cron** → `CronSchedulerAdapter` (tick `SCHEDULER_TICK_MS`) dispara los triggers vencidos.
+
+Cada ejecución crea un `WorkflowRun` (`status: running`) y el `RunPersistenceAdapter` va escribiendo
+los pasos vía los eventos del pipeline hasta el estado final.
 
 Las cookies `cydo_access` / `cydo_refresh` son `httpOnly`; el interceptor de axios renueva la
 sesión de forma transparente ante un 401.
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 Los tests viven en `_test/` **dentro de cada módulo del front** y cubren los `actions`
 (resiliencia ante cambios de API/modelo), no la UI.
@@ -351,9 +435,15 @@ Los tests viven en `_test/` **dentro de cada módulo del front** y cubren los `a
 pnpm test                          # todo
 pnpm --filter @cydo/webapp test    # actions de los módulos
 pnpm --filter @cydo/api test       # AuthService (puertos en memoria) + rutas (supertest)
+pnpm --filter @cydo/workflow-engine test    # validación de triggers (cron/webhook)
+pnpm --filter @cydo/workflow-pipeline test  # recorrido de nodos del pipeline
 ```
 
 - **webapp**: Vitest + jsdom + Testing Library. Las requests de `lib/api` se mockean con `vi.mock`.
 - **api**: `tests/authService.test.ts` usa adapters en memoria (`tests/inMemoryPorts.ts`) para
   probar el núcleo de auth sin base de datos; `tests/http.test.ts` valida rutas, validación y
   permisos con `supertest` y el container mockeado.
+- **workflow-engine**: `tests/` con un `TriggerRegistryPort` en memoria (extracción de triggers,
+  sync, resolución de webhooks, validación de cron/timezone).
+- **workflow-pipeline**: `tests/` con executors en memoria (recorrido lineal, bifurcación, ciclos,
+  límite de pasos, errores y cancelación).

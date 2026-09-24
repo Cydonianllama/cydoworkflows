@@ -2,10 +2,13 @@ import { AUTH_ERROR, AuthError } from "@cydo/auth"
 import type { Request, Response } from "express"
 import { resolveAccountId } from "../../utils/account"
 import { sendCreated, sendList, sendOk } from "../../setup/response"
+import { workflowEngine } from "../../setup/container"
+import { executeWorkflow } from "./workflows.execution"
 import { workflowsService } from "./workflows.service"
 import type {
   ListWorkflowVersionsQuery,
   ListWorkflowsQuery,
+  RunWorkflowInput,
   SaveWorkflowGraphInput,
 } from "./workflows.dto"
 
@@ -46,6 +49,7 @@ export async function deleteWorkflowHandler(req: Request, res: Response): Promis
   const user = currentUser(req)
   const { id } = req.params as { id: string }
   const deleted = await workflowsService.remove(resolveAccountId(user), id)
+  await workflowEngine.removeTriggers(id)
   sendOk(res, deleted, "Workflow eliminado")
 }
 
@@ -67,7 +71,19 @@ export async function saveWorkflowGraphHandler(req: Request, res: Response): Pro
 export async function publishWorkflowHandler(req: Request, res: Response): Promise<void> {
   const user = currentUser(req)
   const { id } = req.params as { id: string }
-  const workflow = await workflowsService.publish(resolveAccountId(user), user.id, id)
+  const accountId = resolveAccountId(user)
+  const workflow = await workflowsService.publish(accountId, user.id, id)
+
+  const versionDoc = await workflowsService.getVersion(accountId, id, workflow.version)
+  await workflowEngine.syncWorkflowTriggers(
+    { workflowId: id, ownerId: accountId, version: workflow.version },
+    versionDoc.nodes.map((node) => ({
+      id: node.id,
+      type: node.type,
+      configuration: node.configuration,
+    })),
+  )
+
   sendOk(res, { workflow }, "Workflow publicado")
 }
 
@@ -106,4 +122,16 @@ export async function revertWorkflowChangesHandler(req: Request, res: Response):
   const { id } = req.params as { id: string }
   const result = await workflowsService.revertChanges(resolveAccountId(user), id)
   sendOk(res, result, "Cambios revertidos")
+}
+
+export async function runWorkflowHandler(req: Request, res: Response): Promise<void> {
+  const user = currentUser(req)
+  const { id } = req.params as { id: string }
+  const { nodeId } = req.body as RunWorkflowInput
+  const result = await executeWorkflow({
+    ownerId: resolveAccountId(user),
+    workflowId: id,
+    trigger: { kind: "manual", nodeId: nodeId ?? "" },
+  })
+  sendOk(res, result, "Workflow ejecutado")
 }

@@ -2,6 +2,7 @@ import type { ErrorRequestHandler, RequestHandler } from "express"
 import { Error as MongooseError } from "mongoose"
 import { ZodError } from "zod"
 import { AuthError } from "@cydo/auth"
+import { ENGINE_ERROR, EngineError } from "@cydo/workflow-engine"
 import { isProduction } from "../setup/env"
 
 export const notFound: RequestHandler = (_req, res) => {
@@ -21,6 +22,12 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
       message: error.issues.map((issue) => issue.message).join(", "),
       code: "VALIDATION",
     })
+    return
+  }
+
+  if (error instanceof EngineError) {
+    const status = error.code === ENGINE_ERROR.TRIGGER_NOT_FOUND ? 404 : 422
+    res.status(status).json({ status: false, data: null, message: error.message, code: error.code })
     return
   }
 

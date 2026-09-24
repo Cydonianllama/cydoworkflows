@@ -8,6 +8,7 @@ import { invitesRouter, membersRouter } from "../modules/members/members.routes"
 import { onboardingRouter } from "../modules/onboarding/onboarding.routes"
 import { usersRouter } from "../modules/users/users.routes"
 import { workflowsRouter } from "../modules/workflows/workflows.routes"
+import { webhooksRouter } from "../modules/webhooks/webhooks.routes"
 import { env } from "./env"
 
 export const API_PREFIX = "/api/v1"
@@ -28,6 +29,8 @@ export function createApp(): Express {
   app.get("/health", (_req, res) => {
     res.json({ status: true, data: { uptime: process.uptime() } })
   })
+
+  app.use("/hooks", webhooksRouter)
 
   const api = express.Router()
   api.use("/auth", authRouter)

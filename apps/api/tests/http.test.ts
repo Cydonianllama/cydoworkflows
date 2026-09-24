@@ -58,6 +58,17 @@ vi.mock("../src/setup/container", () => ({
   },
   emailPort: {},
   userRepository: {},
+  workflowEngine: {
+    syncWorkflowTriggers: vi.fn(),
+    removeTriggers: vi.fn(),
+    resolveWebhook: vi.fn(),
+  },
+}))
+
+vi.mock("../src/modules/workflows/workflows.execution", () => ({
+  executeWorkflow: vi.fn(),
+  startWorkflowRuntime: vi.fn(),
+  stopWorkflowRuntime: vi.fn(),
 }))
 
 vi.mock("../src/modules/workflows/workflows.service", () => ({
@@ -74,7 +85,9 @@ vi.mock("../src/modules/workflows/workflows.service", () => ({
 }))
 
 import { createApp } from "../src/setup/app"
+import { workflowEngine } from "../src/setup/container"
 import { workflowsService } from "../src/modules/workflows/workflows.service"
+import { executeWorkflow } from "../src/modules/workflows/workflows.execution"
 
 const app = createApp()
 const AUTH_COOKIE = "cydo_access=valid-access-token"
@@ -154,6 +167,24 @@ describe("API /workflows versionado", () => {
   it("publica el workflow y devuelve el meta actualizado", async () => {
     const published = { ...workflow, version: 3, hasUnpublishedChanges: false }
     vi.mocked(workflowsService.publish).mockResolvedValue(published)
+    vi.mocked(workflowsService.getVersion).mockResolvedValue({
+      workflowId: "w1",
+      version: 3,
+      name: workflow.name,
+      nodeCount: 1,
+      publishedAt: "2026-01-02T00:00:00.000Z",
+      nodes: [
+        {
+          id: "t1",
+          title: "Trigger",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          type: "node:triggerwebhook" as const,
+          configuration: { token: "abc" },
+          nextNode: "",
+          position: { x: 0, y: 0 },
+        },
+      ],
+    })
 
     const res = await request(app)
       .post(`/api/v1/workflows/${WORKFLOW_ID}/publish`)
@@ -163,6 +194,7 @@ describe("API /workflows versionado", () => {
     expect(res.body.status).toBe(true)
     expect(res.body.data.workflow.version).toBe(3)
     expect(workflowsService.publish).toHaveBeenCalled()
+    expect(workflowEngine.syncWorkflowTriggers).toHaveBeenCalled()
   })
 
   it("rechaza publish con id inválido", async () => {
@@ -277,6 +309,92 @@ describe("API /workflows versionado", () => {
     expect(res.status).toBe(403)
     expect(res.body.code).toBe("ACCOUNT_RESTRICTED")
     expect(workflowsService.publish).not.toHaveBeenCalled()
+  })
+})
+
+describe("API /workflows/:id/run", () => {
+  it("ejecuta el workflow publicado", async () => {
+    vi.mocked(executeWorkflow).mockResolvedValue({
+      runId: "run1",
+      status: "success",
+      steps: [],
+      error: null,
+      startedAt: new Date(),
+      finishedAt: new Date(),
+    })
+
+    const res = await request(app)
+      .post(`/api/v1/workflows/${WORKFLOW_ID}/run`)
+      .set("Cookie", AUTH_COOKIE)
+      .send({ nodeId: "n1" })
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.runId).toBe("run1")
+    expect(executeWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: WORKFLOW_ID, trigger: { kind: "manual", nodeId: "n1" } }),
+    )
+  })
+
+  it("rechaza id inválido", async () => {
+    const res = await request(app).post("/api/v1/workflows/no-id/run").set("Cookie", AUTH_COOKIE)
+    expect(res.status).toBe(422)
+    expect(executeWorkflow).not.toHaveBeenCalled()
+  })
+
+  it("no permite ejecutar a un miembro restringido", async () => {
+    h.current = { ...h.owner, status: "restricted" }
+    const res = await request(app).post(`/api/v1/workflows/${WORKFLOW_ID}/run`).set("Cookie", AUTH_COOKIE)
+    expect(res.status).toBe(403)
+  })
+})
+
+describe("API /hooks/:token", () => {
+  it("ejecuta el workflow del webhook registrado", async () => {
+    vi.mocked(workflowEngine.resolveWebhook).mockResolvedValue({
+      workflowId: WORKFLOW_ID,
+      ownerId: "u1",
+      version: 2,
+      nodeId: "n1",
+      nodeType: "node:triggerwebhook",
+      kind: "webhook",
+      webhookToken: "secreto",
+    })
+    vi.mocked(executeWorkflow).mockResolvedValue({
+      runId: "run2",
+      status: "success",
+      steps: [],
+      error: null,
+      startedAt: new Date(),
+      finishedAt: new Date(),
+    })
+
+    const res = await request(app).post("/hooks/secreto").send({ data: 123 })
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.runId).toBe("run2")
+    expect(executeWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({ trigger: expect.objectContaining({ kind: "webhook", nodeId: "n1" }) }),
+    )
+  })
+
+  it("responde 404 con token desconocido", async () => {
+    const { ENGINE_ERROR, EngineError } = await import("@cydo/workflow-engine")
+    vi.mocked(workflowEngine.resolveWebhook).mockRejectedValue(
+      new EngineError(ENGINE_ERROR.TRIGGER_NOT_FOUND),
+    )
+
+    const res = await request(app).post("/hooks/desconocido").send({})
+
+    expect(res.status).toBe(404)
+    expect(res.body.code).toBe("TRIGGER_NOT_FOUND")
+  })
+})
+
+describe("API sincroniza triggers", () => {
+  it("elimina los triggers al borrar el workflow", async () => {
+    vi.mocked(workflowsService.remove).mockResolvedValue({ id: "w1" })
+    await request(app).delete(`/api/v1/workflows/${WORKFLOW_ID}`).set("Cookie", AUTH_COOKIE)
+    expect(workflowEngine.removeTriggers).toHaveBeenCalledWith(WORKFLOW_ID)
   })
 })
 
