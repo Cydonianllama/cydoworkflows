@@ -8,10 +8,12 @@ import {
   publishWorkflowRequest,
   restoreWorkflowVersionRequest,
   revertWorkflowRequest,
+  runWorkflowRequest,
   saveWorkflowGraphRequest,
   updateWorkflowRequest,
   type GraphNodeDTO,
   type RestoreWorkflowResponseDTO,
+  type RunItemDTO,
   type WorkflowVersionSummaryDTO,
 } from "@/lib/api/workflows"
 import { eventBus } from "@/lib/eventBus/eventBus"
@@ -401,6 +403,33 @@ export const useFlowchartActions = () => {
     }
   }, [workflowId, setLoading, applyRestoredGraph])
 
+  const runWorkflowAction = useCallback(
+    async (nodeId: string, inputData?: RunItemDTO[]): Promise<{ runId: string } | null> => {
+      if (!workflowId) return null
+
+      try {
+        const req = await runWorkflowRequest(workflowId, { nodeId, inputData })
+
+        if (!req) {
+          toast.error("No pudimos ejecutar el workflow")
+          return null
+        }
+
+        if (!req.status || !req.data?.runId) {
+          toast.error(req.message ?? "No pudimos ejecutar el workflow")
+          return null
+        }
+
+        eventBus.emit("workflow.run.started", { workflowId, runId: req.data.runId })
+        return { runId: req.data.runId }
+      } catch (error) {
+        toast.error(errorMessage(error, "Error inesperado (RunWorkflowAction)"))
+        return null
+      }
+    },
+    [workflowId],
+  )
+
   return {
     loadWorkflowAction,
     renameWorkflowAction,
@@ -410,6 +439,7 @@ export const useFlowchartActions = () => {
     listVersionsAction,
     restoreVersionAction,
     revertChangesAction,
+    runWorkflowAction,
     loading,
     dirty,
     nodes,

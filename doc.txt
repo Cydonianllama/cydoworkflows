@@ -1,0 +1,44 @@
+
+Email:    admin@cydo.app
+Password: Cydo12345
+
+
+
+1. crear estos componentes reutilizables para la edicion de nodos
+ - crear un input especial para edicion de nodo
+ - crear un select especial para edicion de nodo
+ - crear un switch  especial para edicion de nodo
+ - crear un textarea  especial para edicion de nodo
+ - crear un componente ParametersEditors
+
+- con el fin de poder agregar funcionalidades posteriormente 
+
+
+
+2. agregar configuration para nodo call API: usarás el ParametersEditor para manejo de actualizaciones,
+- las actualizaciones irán en la definicion del nodo
+
+
+-- parametros opcionales opcionales que pueden agregarse a parameters (despues de mostrar los inputs), abajo creas un boton select para agregar los parametros opcionales, (estos tambien se podrán retirar)
+
+{ type: 'HEADERS', value: string | number | boolean | Array },  -> en este casos es un array { key: string, value: string }
+
+configuration
+	parameters: [
+		{ type: 'METHOD', value: string | number | boolean | Array },
+		{ type: 'URL', value: string | number | boolean | Array },
+		{ type: 'BODY', value: string | number | boolean | Array }
+	]
+
+
+--- NEXT - 28/09/2026
+
+Objectivo:
+- en mi editor tengo en el centro el editor del nodo actual, al lado izquierdo la el output data de la ultima ejecucion y al lado derecho la seccion de output del actual
+- necesito empezar a visualizar el output de la ejecución anterior. conveegamos que el trigger webhook, tenga un editor para armar un json de posible llegada. (esto incluirlo en el requerimiento) ese json, ya se pase a los siguientes nodos
+- en el visualizarod del izquierdo, la data de cada parametro será representada en un recuadrito, el cual será draggable a la configuracion iniciar
+- los inputs personalizados de mi editor ahora tendran dos modos, el texto plano y otro de codigo, cuando séa codigo podremos acceder a los datos que estamos manipulando mediante "{{", 
+	{{ $('texto referencial').json.[0].param1 }} -- acceder a data de algun item
+	{{ $today.toFormat('dd-MM-yyyy HH:mm:ss') }} -- formatear la feha de hoy
+- y el output de la derecha, claro, solo se muestra data si ya se terminó de ejecutar el siguiente nodo
+- ahora si no hay ejecucion, tanto el output de la izquierda y de la derecha  informarán que necesitan ejecucion o guardar cambios para comenzar la ejecución

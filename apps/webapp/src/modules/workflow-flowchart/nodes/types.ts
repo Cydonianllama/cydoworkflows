@@ -281,6 +281,9 @@ export interface NodeExecutionConfig {
   activeClassName?: string
 }
 
+/** Estado persistente del último run por nodo (hasta que cambie su configuración). */
+export type NodeExecutionStatus = "success" | "error"
+
 export interface NodeAction {
   id: string
   label: string

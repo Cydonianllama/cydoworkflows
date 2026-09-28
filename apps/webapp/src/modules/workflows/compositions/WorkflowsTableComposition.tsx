@@ -59,6 +59,7 @@ export function WorkflowsTableComposition({ onCreate, canDelete }: WorkflowsTabl
               <TableHead>Nombre</TableHead>
               <TableHead>Estado</TableHead>
               <TableHead>Creado</TableHead>
+              <TableHead>Ejecuciones</TableHead>
               <TableHead className="text-right">Acciones</TableHead>
             </TableRow>
           </TableHeader>

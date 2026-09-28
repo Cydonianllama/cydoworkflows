@@ -1,4 +1,4 @@
-import type { RunEvents, RunResult, TriggerKind } from "@cydo/workflow-pipeline"
+import type { RunEvents, RunItem, RunResult, TriggerKind } from "@cydo/workflow-pipeline"
 import mongoose from "mongoose"
 import {
   WorkflowRunModel,
@@ -10,6 +10,7 @@ export interface CreateRunInput {
   ownerId: string
   version: number
   trigger: { kind: TriggerKind; nodeId: string }
+  inputData?: RunItem[]
 }
 
 const STATUS_BY_RESULT: Record<RunResult["status"], WorkflowRunStatus> = {
@@ -30,7 +31,9 @@ export class RunPersistenceAdapter {
       version: input.version,
       trigger: input.trigger,
       status: "running",
+      inputData: input.inputData ?? [],
       steps: [],
+      data: {},
       error: null,
       startedAt: new Date(),
       finishedAt: null,
@@ -54,6 +57,7 @@ export class RunPersistenceAdapter {
             $set: {
               status: STATUS_BY_RESULT[result.status],
               steps: result.steps,
+              data: result.runData,
               error: result.error,
               finishedAt: result.finishedAt,
             },

@@ -67,6 +67,7 @@ vi.mock("../src/setup/container", () => ({
 
 vi.mock("../src/modules/workflows/workflows.execution", () => ({
   executeWorkflow: vi.fn(),
+  startWorkflowRun: vi.fn(),
   startWorkflowRuntime: vi.fn(),
   stopWorkflowRuntime: vi.fn(),
 }))
@@ -79,6 +80,8 @@ vi.mock("../src/modules/workflows/workflows.service", () => ({
     publish: vi.fn(),
     listVersions: vi.fn(),
     getVersion: vi.fn(),
+    listRuns: vi.fn(),
+    getRun: vi.fn(),
     restoreVersion: vi.fn(),
     revertChanges: vi.fn(),
   },
@@ -87,7 +90,7 @@ vi.mock("../src/modules/workflows/workflows.service", () => ({
 import { createApp } from "../src/setup/app"
 import { workflowEngine } from "../src/setup/container"
 import { workflowsService } from "../src/modules/workflows/workflows.service"
-import { executeWorkflow } from "../src/modules/workflows/workflows.execution"
+import { startWorkflowRun } from "../src/modules/workflows/workflows.execution"
 
 const app = createApp()
 const AUTH_COOKIE = "cydo_access=valid-access-token"
@@ -102,6 +105,7 @@ const workflow = {
   version: 2,
   publishedAt: "2026-01-02T00:00:00.000Z",
   hasUnpublishedChanges: false,
+  runsCount: 3,
 }
 
 const pagination = { page: 1, limit: 10, total: 1, totalPages: 1, hasNextPage: false, hasPreviousPage: false }
@@ -127,6 +131,7 @@ describe("API /workflows", () => {
     expect(res.status).toBe(200)
     expect(res.body.status).toBe(true)
     expect(res.body.data.items).toHaveLength(1)
+    expect(res.body.data.items[0].runsCount).toBe(3)
     expect(res.body.pagination).toMatchObject({ page: 1, total: 1, hasNextPage: false })
   })
 
@@ -313,15 +318,8 @@ describe("API /workflows versionado", () => {
 })
 
 describe("API /workflows/:id/run", () => {
-  it("ejecuta el workflow publicado", async () => {
-    vi.mocked(executeWorkflow).mockResolvedValue({
-      runId: "run1",
-      status: "success",
-      steps: [],
-      error: null,
-      startedAt: new Date(),
-      finishedAt: new Date(),
-    })
+  it("inicia la ejecución del workflow publicado", async () => {
+    vi.mocked(startWorkflowRun).mockResolvedValue({ runId: "run1" })
 
     const res = await request(app)
       .post(`/api/v1/workflows/${WORKFLOW_ID}/run`)
@@ -329,8 +327,9 @@ describe("API /workflows/:id/run", () => {
       .send({ nodeId: "n1" })
 
     expect(res.status).toBe(200)
+    expect(res.body.message).toBe("Ejecución iniciada")
     expect(res.body.data.runId).toBe("run1")
-    expect(executeWorkflow).toHaveBeenCalledWith(
+    expect(startWorkflowRun).toHaveBeenCalledWith(
       expect.objectContaining({ workflowId: WORKFLOW_ID, trigger: { kind: "manual", nodeId: "n1" } }),
     )
   })
@@ -338,13 +337,88 @@ describe("API /workflows/:id/run", () => {
   it("rechaza id inválido", async () => {
     const res = await request(app).post("/api/v1/workflows/no-id/run").set("Cookie", AUTH_COOKIE)
     expect(res.status).toBe(422)
-    expect(executeWorkflow).not.toHaveBeenCalled()
+    expect(startWorkflowRun).not.toHaveBeenCalled()
   })
 
   it("no permite ejecutar a un miembro restringido", async () => {
     h.current = { ...h.owner, status: "restricted" }
     const res = await request(app).post(`/api/v1/workflows/${WORKFLOW_ID}/run`).set("Cookie", AUTH_COOKIE)
     expect(res.status).toBe(403)
+  })
+})
+
+describe("API /workflows/:id/runs", () => {
+  it("lista las ejecuciones del workflow", async () => {
+    vi.mocked(workflowsService.listRuns).mockResolvedValue({
+      items: [
+        {
+          id: "run1",
+          workflowId: WORKFLOW_ID,
+          version: 2,
+          trigger: { kind: "manual", nodeId: "n1" },
+          status: "success",
+          inputData: [{ json: {} }],
+          stepCount: 2,
+          error: null,
+          startedAt: "2026-01-03T00:00:00.000Z",
+          finishedAt: "2026-01-03T00:00:01.000Z",
+        },
+      ],
+      pagination,
+    })
+
+    const res = await request(app)
+      .get(`/api/v1/workflows/${WORKFLOW_ID}/runs`)
+      .set("Cookie", AUTH_COOKIE)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.items).toHaveLength(1)
+    expect(res.body.data.items[0].id).toBe("run1")
+  })
+
+  it("devuelve el detalle de una ejecución con su data", async () => {
+    vi.mocked(workflowsService.getRun).mockResolvedValue({
+      id: "run1",
+      workflowId: WORKFLOW_ID,
+      version: 2,
+      trigger: { kind: "manual", nodeId: "n1" },
+      status: "success",
+      inputData: [{ json: { param1: "" } }],
+      stepCount: 1,
+      error: null,
+      startedAt: "2026-01-03T00:00:00.000Z",
+      finishedAt: "2026-01-03T00:00:01.000Z",
+      steps: [
+        {
+          nodeId: "n1",
+          type: "node:triggeronclick",
+          status: "success",
+          startedAt: "2026-01-03T00:00:00.000Z",
+          finishedAt: "2026-01-03T00:00:01.000Z",
+          input: [{ json: { param1: "" } }],
+          output: [{ json: { param1: "" } }],
+          error: null,
+        },
+      ],
+      data: { n1: [{ json: { param1: "" } }] },
+    })
+
+    const res = await request(app)
+      .get(`/api/v1/workflows/${WORKFLOW_ID}/runs/64b7f8f9a1b2c3d4e5f6a7b9`)
+      .set("Cookie", AUTH_COOKIE)
+
+    expect(res.status).toBe(200)
+    expect(res.body.data.run.id).toBe("run1")
+    expect(res.body.data.run.data.n1).toHaveLength(1)
+  })
+
+  it("rechaza un runId inválido", async () => {
+    const res = await request(app)
+      .get(`/api/v1/workflows/${WORKFLOW_ID}/runs/no-es-object-id`)
+      .set("Cookie", AUTH_COOKIE)
+
+    expect(res.status).toBe(422)
+    expect(workflowsService.getRun).not.toHaveBeenCalled()
   })
 })
 
@@ -359,20 +433,13 @@ describe("API /hooks/:token", () => {
       kind: "webhook",
       webhookToken: "secreto",
     })
-    vi.mocked(executeWorkflow).mockResolvedValue({
-      runId: "run2",
-      status: "success",
-      steps: [],
-      error: null,
-      startedAt: new Date(),
-      finishedAt: new Date(),
-    })
+    vi.mocked(startWorkflowRun).mockResolvedValue({ runId: "run2" })
 
     const res = await request(app).post("/hooks/secreto").send({ data: 123 })
 
     expect(res.status).toBe(200)
     expect(res.body.data.runId).toBe("run2")
-    expect(executeWorkflow).toHaveBeenCalledWith(
+    expect(startWorkflowRun).toHaveBeenCalledWith(
       expect.objectContaining({ trigger: expect.objectContaining({ kind: "webhook", nodeId: "n1" }) }),
     )
   })

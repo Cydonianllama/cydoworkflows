@@ -3,9 +3,10 @@ import type { Request, Response } from "express"
 import { resolveAccountId } from "../../utils/account"
 import { sendCreated, sendList, sendOk } from "../../setup/response"
 import { workflowEngine } from "../../setup/container"
-import { executeWorkflow } from "./workflows.execution"
+import { startWorkflowRun } from "./workflows.execution"
 import { workflowsService } from "./workflows.service"
 import type {
+  ListWorkflowRunsQuery,
   ListWorkflowVersionsQuery,
   ListWorkflowsQuery,
   RunWorkflowInput,
@@ -127,11 +128,27 @@ export async function revertWorkflowChangesHandler(req: Request, res: Response):
 export async function runWorkflowHandler(req: Request, res: Response): Promise<void> {
   const user = currentUser(req)
   const { id } = req.params as { id: string }
-  const { nodeId } = req.body as RunWorkflowInput
-  const result = await executeWorkflow({
+  const { nodeId, inputData } = req.body as RunWorkflowInput
+  const { runId } = await startWorkflowRun({
     ownerId: resolveAccountId(user),
     workflowId: id,
     trigger: { kind: "manual", nodeId: nodeId ?? "" },
+    inputData,
   })
-  sendOk(res, result, "Workflow ejecutado")
+  sendOk(res, { runId }, "Ejecución iniciada")
+}
+
+export async function listWorkflowRunsHandler(req: Request, res: Response): Promise<void> {
+  const user = currentUser(req)
+  const { id } = req.params as { id: string }
+  const query = req.query as unknown as ListWorkflowRunsQuery
+  const { items, pagination } = await workflowsService.listRuns(resolveAccountId(user), id, query)
+  sendList(res, items, pagination)
+}
+
+export async function getWorkflowRunHandler(req: Request, res: Response): Promise<void> {
+  const user = currentUser(req)
+  const { id, runId } = req.params as { id: string; runId: string }
+  const run = await workflowsService.getRun(resolveAccountId(user), id, runId)
+  sendOk(res, { run })
 }

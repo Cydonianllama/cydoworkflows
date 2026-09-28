@@ -28,13 +28,15 @@ import { FlowchartContextMenu } from "../components/FlowchartContextMenu/Flowcha
 import type { ContextMenuItem } from "../components/FlowchartContextMenu/contextMenuProps"
 import { useFlowchartInitialLoad } from "../hooks/useFlowchartInitialLoad"
 import { useGraphAutoSave } from "../hooks/useGraphAutoSave"
-import { useFlowExecution } from "../hooks/useFlowExecution"
+import { useFlowchartActions } from "../actions/useFlowchartActions"
+import { useWorkflowRunChannel } from "../hooks/useWorkflowRunChannel"
 import { getNodeDefinition, getOutgoingEdges, listNodeDefinitions } from "../nodes"
 import { readNoteConfiguration } from "../nodes/note/noteNode"
 import type { FlowchartNodeType, FlowchartRfNode, INode, NoteColor } from "../nodes/types"
 import { useFlowchartStore } from "../store"
 import { nodesToEdges } from "../utils/nodesToEdges"
 import { duplicateNodes } from "../utils/duplicateNodes"
+import { collectDownstreamNodeIds } from "../utils/collectDownstreamNodeIds"
 
 interface ContextMenuState {
   x: number
@@ -128,8 +130,9 @@ function FlowchartCompositionInner({ workflowId }: { workflowId: string }) {
     x: number
     y: number
   } | null>(null)
-  const { running: executing, activeNodeId, start: startExecution, stop: stopExecution } =
-    useFlowExecution(nodes)
+  const { running: executing, activeNodeId, executedNodes, track: trackRun, stop: stopExecution, clearExecuted } =
+    useWorkflowRunChannel(workflowId)
+  const { runWorkflowAction } = useFlowchartActions()
 
   useFlowchartInitialLoad()
   useGraphAutoSave()
@@ -188,11 +191,12 @@ function FlowchartCompositionInner({ workflowId }: { workflowId: string }) {
   }, [edges, activeNodeId])
 
   const handleExecuteTrigger = useCallback(
-    (triggerId: string) => {
+    async (triggerId: string) => {
       if (executing) return
-      void startExecution(triggerId)
+      const started = await runWorkflowAction(triggerId)
+      if (started) trackRun(started.runId)
     },
-    [executing, startExecution],
+    [executing, runWorkflowAction, trackRun],
   )
 
   const handleAddNode = useCallback(
@@ -748,9 +752,10 @@ function FlowchartCompositionInner({ workflowId }: { workflowId: string }) {
           }
         }),
       )
+      clearExecuted(collectDownstreamNodeIds(nodeId, edges))
       markDirty()
     },
-    [nodes, setNodes, markDirty],
+    [nodes, edges, setNodes, markDirty, clearExecuted],
   )
 
   const handleConnect = useCallback(
@@ -980,6 +985,7 @@ function FlowchartCompositionInner({ workflowId }: { workflowId: string }) {
           className="h-full w-full"
           executingNodeId={activeNodeId}
           executingEdgeIds={executingEdgeIds}
+          executedNodeStatus={executedNodes}
           onNodesChange={handleNodesChange}
           onEdgesChange={handleEdgesChange}
           onConnect={handleConnect}

@@ -19,6 +19,11 @@ export const workflowIdParamSchema = z.object({
   id: objectIdSchema,
 })
 
+export const workflowRunParamSchema = z.object({
+  id: objectIdSchema,
+  runId: objectIdSchema,
+})
+
 export const workflowVersionParamSchema = z.object({
   id: objectIdSchema,
   version: z.coerce.number().int().min(1),
@@ -76,9 +81,20 @@ export const saveWorkflowGraphSchema = z.object({
   nodes: z.array(graphNodeSchema).max(200),
 })
 
+export const listWorkflowRunsQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+})
+
+export const runItemSchema = z.object({
+  json: z.record(z.unknown()).default({}),
+  binary: z.record(z.unknown()).optional(),
+})
+
 export const runWorkflowSchema = z
   .object({
     nodeId: z.string().max(120).optional(),
+    inputData: z.array(runItemSchema).max(500).optional(),
   })
   .default({})
 
@@ -86,6 +102,7 @@ export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>
 export type ListWorkflowsQuery = z.infer<typeof listWorkflowsQuerySchema>
 export type ListWorkflowVersionsQuery = z.infer<typeof listWorkflowVersionsQuerySchema>
+export type ListWorkflowRunsQuery = z.infer<typeof listWorkflowRunsQuerySchema>
 export type SaveWorkflowGraphInput = z.infer<typeof saveWorkflowGraphSchema>
 export type GraphNodeInput = z.infer<typeof graphNodeSchema>
 export type RunWorkflowInput = z.infer<typeof runWorkflowSchema>

@@ -43,9 +43,14 @@ export interface WorkflowDTO {
   version: number
   publishedAt: string | null
   hasUnpublishedChanges: boolean
+  /** Cantidad de ejecuciones. Sólo se incluye en el listado. */
+  runsCount?: number
 }
 
-export function toWorkflowDTO(doc: HydratedDocument<WorkflowAttrs>): WorkflowDTO {
+export function toWorkflowDTO(
+  doc: HydratedDocument<WorkflowAttrs>,
+  runsCount?: number,
+): WorkflowDTO {
   return {
     id: doc._id.toString(),
     name: doc.name,
@@ -55,5 +60,6 @@ export function toWorkflowDTO(doc: HydratedDocument<WorkflowAttrs>): WorkflowDTO
     version: doc.version ?? 0,
     publishedAt: doc.publishedAt ? doc.publishedAt.toISOString() : null,
     hasUnpublishedChanges: doc.hasUnpublishedChanges ?? false,
+    ...(runsCount === undefined ? {} : { runsCount }),
   }
 }

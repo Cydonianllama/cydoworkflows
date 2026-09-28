@@ -16,7 +16,15 @@ import {
   type WorkflowVersionDTO,
   type WorkflowVersionSummaryDTO,
 } from "./workflows.version.model"
+import {
+  WorkflowRunModel,
+  toWorkflowRunDetailDTO,
+  toWorkflowRunSummaryDTO,
+  type WorkflowRunDetailDTO,
+  type WorkflowRunSummaryDTO,
+} from "./workflows.run.model"
 import type {
+  ListWorkflowRunsQuery,
   ListWorkflowVersionsQuery,
   ListWorkflowsQuery,
   SaveWorkflowGraphInput,
@@ -29,6 +37,11 @@ export interface WorkflowSlice {
 
 export interface WorkflowVersionSlice {
   items: WorkflowVersionSummaryDTO[]
+  pagination: PaginationMeta
+}
+
+export interface WorkflowRunSlice {
+  items: WorkflowRunSummaryDTO[]
   pagination: PaginationMeta
 }
 
@@ -78,7 +91,8 @@ export class WorkflowsService {
   }
 
   async list(accountId: string, query: ListWorkflowsQuery): Promise<WorkflowSlice> {
-    const filter: Record<string, unknown> = { ownerId: new mongoose.Types.ObjectId(accountId) }
+    const ownerObjectId = new mongoose.Types.ObjectId(accountId)
+    const filter: Record<string, unknown> = { ownerId: ownerObjectId }
     const search = query.search?.trim()
 
     if (search) {
@@ -94,10 +108,29 @@ export class WorkflowsService {
       WorkflowModel.countDocuments(filter),
     ])
 
+    const countByWorkflow = await this.countRunsByWorkflow(docs.map((doc) => doc._id))
+
     return {
-      items: docs.map(toWorkflowDTO),
+      items: docs.map((doc) => toWorkflowDTO(doc, countByWorkflow.get(doc._id.toString()) ?? 0)),
       pagination: buildPagination(page, limit, total),
     }
+  }
+
+  /** Cuenta las ejecuciones de cada workflow de la página en una sola query. */
+  private async countRunsByWorkflow(
+    workflowIds: mongoose.Types.ObjectId[],
+  ): Promise<Map<string, number>> {
+    if (workflowIds.length === 0) return new Map()
+
+    const counts = await WorkflowRunModel.aggregate<{
+      _id: mongoose.Types.ObjectId
+      count: number
+    }>([
+      { $match: { workflowId: { $in: workflowIds } } },
+      { $group: { _id: "$workflowId", count: { $sum: 1 } } },
+    ])
+
+    return new Map(counts.map((entry) => [entry._id.toString(), entry.count]))
   }
 
   async remove(accountId: string, id: string): Promise<{ id: string }> {
@@ -287,6 +320,53 @@ export class WorkflowsService {
     }
 
     return toWorkflowVersionDTO(doc)
+  }
+
+  async listRuns(
+    accountId: string,
+    workflowId: string,
+    query: ListWorkflowRunsQuery,
+  ): Promise<WorkflowRunSlice> {
+    const ownerObjectId = new mongoose.Types.ObjectId(accountId)
+    const workflowObjectId = new mongoose.Types.ObjectId(workflowId)
+
+    const workflow = await WorkflowModel.findOne({
+      _id: workflowObjectId,
+      ownerId: ownerObjectId,
+    })
+
+    if (!workflow) {
+      throw new AuthError(AUTH_ERROR.USER_NOT_FOUND, "Workflow no encontrado")
+    }
+
+    const filter = { workflowId: workflowObjectId, ownerId: ownerObjectId }
+    const { page, limit } = query
+    const [docs, total] = await Promise.all([
+      WorkflowRunModel.find(filter)
+        .sort({ startedAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+      WorkflowRunModel.countDocuments(filter),
+    ])
+
+    return {
+      items: docs.map(toWorkflowRunSummaryDTO),
+      pagination: buildPagination(page, limit, total),
+    }
+  }
+
+  async getRun(accountId: string, workflowId: string, runId: string): Promise<WorkflowRunDetailDTO> {
+    const doc = await WorkflowRunModel.findOne({
+      _id: new mongoose.Types.ObjectId(runId),
+      workflowId: new mongoose.Types.ObjectId(workflowId),
+      ownerId: new mongoose.Types.ObjectId(accountId),
+    })
+
+    if (!doc) {
+      throw new AuthError(AUTH_ERROR.USER_NOT_FOUND, "Ejecución no encontrada")
+    }
+
+    return toWorkflowRunDetailDTO(doc)
   }
 
   async restoreVersion(

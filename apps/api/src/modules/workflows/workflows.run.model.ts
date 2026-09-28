@@ -1,4 +1,5 @@
-import mongoose, { Schema, type Model } from "mongoose"
+import type { RunData, RunItem, RunItems } from "@cydo/workflow-pipeline"
+import mongoose, { Schema, type HydratedDocument, type Model } from "mongoose"
 
 export type WorkflowRunStatus = "running" | "success" | "failed" | "limit" | "cancelled"
 export type WorkflowRunStepStatus = "success" | "error" | "skipped"
@@ -10,7 +11,8 @@ export interface WorkflowRunStepAttrs {
   status: WorkflowRunStepStatus
   startedAt: Date
   finishedAt: Date
-  output: unknown
+  input: RunItems
+  output: RunItems
   error: string | null
 }
 
@@ -20,7 +22,11 @@ export interface WorkflowRunAttrs {
   version: number
   trigger: { kind: WorkflowRunTriggerKind; nodeId: string }
   status: WorkflowRunStatus
+  /** Items con los que arranca la ejecución (el "input data" del run). */
+  inputData: RunItem[]
   steps: WorkflowRunStepAttrs[]
+  /** Salidas acumuladas por nodo al terminar (el `runData` de n8n). */
+  data: RunData
   error: string | null
   startedAt: Date
   finishedAt: Date | null
@@ -33,7 +39,8 @@ const workflowRunStepSchema = new Schema<WorkflowRunStepAttrs>(
     status: { type: String, enum: ["success", "error", "skipped"], required: true },
     startedAt: { type: Date, required: true },
     finishedAt: { type: Date, required: true },
-    output: { type: Schema.Types.Mixed, default: null },
+    input: { type: Schema.Types.Mixed, default: [] },
+    output: { type: Schema.Types.Mixed, default: [] },
     error: { type: String, default: null },
   },
   { _id: false },
@@ -53,7 +60,9 @@ const workflowRunSchema = new Schema<WorkflowRunAttrs>(
       enum: ["running", "success", "failed", "limit", "cancelled"],
       default: "running",
     },
+    inputData: { type: Schema.Types.Mixed, default: [] },
     steps: { type: [workflowRunStepSchema], default: [] },
+    data: { type: Schema.Types.Mixed, default: {} },
     error: { type: String, default: null },
     startedAt: { type: Date, default: Date.now },
     finishedAt: { type: Date, default: null },
@@ -67,3 +76,73 @@ workflowRunSchema.index({ ownerId: 1, startedAt: -1 })
 export const WorkflowRunModel: Model<WorkflowRunAttrs> =
   (mongoose.models.WorkflowRun as Model<WorkflowRunAttrs> | undefined) ??
   mongoose.model<WorkflowRunAttrs>("WorkflowRun", workflowRunSchema)
+
+export interface WorkflowRunStepDTO {
+  nodeId: string
+  type: string
+  status: WorkflowRunStepStatus
+  startedAt: string
+  finishedAt: string
+  input: RunItems
+  output: RunItems
+  error: string | null
+}
+
+export interface WorkflowRunSummaryDTO {
+  id: string
+  workflowId: string
+  version: number
+  trigger: { kind: WorkflowRunTriggerKind; nodeId: string }
+  status: WorkflowRunStatus
+  inputData: RunItems
+  stepCount: number
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+}
+
+export interface WorkflowRunDetailDTO extends WorkflowRunSummaryDTO {
+  steps: WorkflowRunStepDTO[]
+  data: RunData
+}
+
+function toStepDTO(step: WorkflowRunStepAttrs): WorkflowRunStepDTO {
+  return {
+    nodeId: step.nodeId,
+    type: step.type,
+    status: step.status,
+    startedAt: new Date(step.startedAt).toISOString(),
+    finishedAt: new Date(step.finishedAt).toISOString(),
+    input: step.input ?? [],
+    output: step.output ?? [],
+    error: step.error,
+  }
+}
+
+export function toWorkflowRunSummaryDTO(
+  doc: HydratedDocument<WorkflowRunAttrs>,
+): WorkflowRunSummaryDTO {
+  return {
+    id: doc._id.toString(),
+    workflowId: doc.workflowId.toString(),
+    version: doc.version,
+    trigger: doc.trigger,
+    status: doc.status,
+    inputData: doc.inputData ?? [],
+    stepCount: doc.steps?.length ?? 0,
+    error: doc.error,
+    startedAt: new Date(doc.startedAt).toISOString(),
+    finishedAt: doc.finishedAt ? new Date(doc.finishedAt).toISOString() : null,
+  }
+}
+
+export function toWorkflowRunDetailDTO(
+  doc: HydratedDocument<WorkflowRunAttrs>,
+): WorkflowRunDetailDTO {
+  return {
+    ...toWorkflowRunSummaryDTO(doc),
+    steps: (doc.steps ?? []).map(toStepDTO),
+    data: doc.data ?? {},
+  }
+}
+

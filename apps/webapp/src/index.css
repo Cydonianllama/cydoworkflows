@@ -152,6 +152,15 @@
   opacity: 0;
 }
 
+/* Nodo ya ejecutado: anillo persistente (se limpia al cambiar su configuración). */
+.react-flow__node.flowchart-node-executed .group > div.h-10.w-10 {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #10b981 70%, transparent);
+}
+
+.react-flow__node.flowchart-node-failed .group > div.h-10.w-10 {
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ef4444 70%, transparent);
+}
+
 /* Edge en ejecución: dashed verde con desplazamiento. */
 .react-flow__edge.flowchart-edge-executing .react-flow__edge-path,
 .flowchart-edge-executing .react-flow__edge-path {

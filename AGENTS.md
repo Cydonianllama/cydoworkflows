@@ -158,7 +158,7 @@ packages/workflow-engine/src/
 ```
 packages/workflow-pipeline/src/
 ├─ core/
-│  ├─ types.ts     # PipelineNode, RunContext, NodeExecutorRegistry, RunResult, RunStep, RunnerOptions
+│  ├─ types.ts     # RunItem/RunItems/RunData, PipelineNode, RunContext, NodeExecutorRegistry, RunStep, RunResult
 │  ├─ events.ts    # RunEvents (onRunStart/onNodeStart/onNodeComplete/onNodeError/onRunFinish)
 │  └─ errors.ts    # PipelineError (NODE_NOT_FOUND, RUN_LIMIT_REACHED, NODE_EXECUTION_FAILED, …)
 └─ server/
@@ -167,7 +167,10 @@ packages/workflow-pipeline/src/
 
 - Los executors de cada tipo de nodo se **inyectan por DI** (`new PipelineRunner(registry, options)`).
   Por ahora el registry está vacío y el runner usa el fallback `node.nextNode` para todos los tipos.
-- `NodeExecutor` recibe `(node, { context, signal })` y devuelve `{ nextNodeIds?, output? }`.
+- Los datos fluyen al estilo n8n: cada nodo recibe `input` (items del nodo anterior, o `context.inputData`
+  en el inicial) y devuelve `output`; sin output explícito los items pasan de largo (pass-through). Las
+  salidas se acumulan en `runData` (`nodeId → RunItems`) y quedan disponibles para los siguientes nodos.
+- `NodeExecutor` recibe `(node, { context, input, runData, signal })` y devuelve `{ nextNodeIds?, output?: RunItems }`.
 
 ---
 
@@ -231,12 +234,14 @@ usan el sobre `{ status, data, message?, pagination? }`.
 | `GET` | `/workflows/:id/graph` | `workflow:read` |
 | `PUT` | `/workflows/:id/graph` | `workflow:update` + no restringido |
 | `POST` | `/workflows/:id/publish` | `workflow:update` + no restringido |
-| `POST` | `/workflows/:id/run` | `workflow:update` + no restringido → ejecuta la versión publicada |
+| `POST` | `/workflows/:id/run` | `workflow:update` + no restringido → lanza la ejecución async y responde `{ runId }` |
+| `GET` | `/workflows/:id/runs` | `workflow:read` → historial de ejecuciones (paginado) |
+| `GET` | `/workflows/:id/runs/:runId` | `workflow:read` → detalle con `steps` y `data` (runData) |
 | `GET` | `/workflows/:id/versions` | `workflow:read` |
 | `GET` | `/workflows/:id/versions/:version` | `workflow:read` |
 | `POST` | `/workflows/:id/versions/:version/restore` | `workflow:update` + no restringido |
 | `POST` | `/workflows/:id/revert` | `workflow:update` + no restringido |
-| `POST` | `/hooks/:token` | público (webhook) → ejecuta el workflow registrado |
+| `POST` | `/hooks/:token` | público (webhook) → lanza la ejecución async del workflow registrado |
 | `GET` | `/members` | `member:invite` |
 | `POST` | `/members/invite` | `member:invite` |
 | `PATCH` | `/members/:id/role` | `member:role` |
@@ -256,7 +261,7 @@ y se usa para scopear workflows y miembros.
 - `Workflow`: ownerId, name, createdBy, status (`draft|published`), version, publishedAt, hasUnpublishedChanges
 - `WorkflowGraph`: workflowId, ownerId, nodes (lista plana; la topología vive en `node.nextNode`)
 - `WorkflowVersion`: snapshot inmutable de `nodes` por cada `publish` (`workflowId + version` único)
-- `WorkflowRun`: workflowId, ownerId, version, trigger, status (`running|success|failed|limit|cancelled`), steps, error
+- `WorkflowRun`: workflowId, ownerId, version, trigger, status (`running|success|failed|limit|cancelled`), `inputData` (items seed), steps (cada uno con `input`/`output`), `data` (runData final), error
 - `TriggerRegistration`: workflowId, ownerId, version, nodeId, kind (`cron|webhook|manual`), cron/timezone o webhookToken
 - `Invite`: email, accountOwnerId, roleInAccount, tokenHash, expiresAt, status
 
@@ -381,7 +386,7 @@ del URI si está definido), `CORS_ORIGIN`, `WEBAPP_URL`, `JWT_ACCESS_SECRET`,
 `GOOGLE_CLIENT_ID`, `RESEND_API_KEY`, `RESEND_FROM`, `SCHEDULER_TICK_MS`,
 `PIPELINE_MAX_STEPS`.
 
-**`apps/webapp/.env`** — `VITE_API_URL`, `VITE_GOOGLE_CLIENT_ID`.
+**`apps/webapp/.env`** — `VITE_API_URL`, `VITE_SOCKET_URL` (origen del API para socket.io), `VITE_GOOGLE_CLIENT_ID`.
 
 Notas de desarrollo:
 - Sin `RESEND_API_KEY` el OTP y los enlaces de invitación se **imprimen en la consola del API**.
@@ -410,16 +415,37 @@ Notas de desarrollo:
 ### Ejecución de workflows
 
 El **publish** sincroniza los triggers en `TriggerRegistration` (engine). A partir de ahí hay tres
-entradas de ejecución, todas convergiendo en `executeWorkflow` (`modules/workflows/workflows.execution.ts`),
-que carga la **versión publicada** y la inyecta al `PipelineRunner`:
+entradas de ejecución, todas convergiendo en `startWorkflowRun`
+(`modules/workflows/workflows.execution.ts`), que carga la **versión publicada** y la inyecta al
+`PipelineRunner`:
 
-1. **Manual** → `POST /api/v1/workflows/:id/run` (body opcional `{ nodeId }`; si falta, usa el primer
-   `node:triggeronclick`).
-2. **Webhook** → `POST /hooks/:token` → `engine.resolveWebhook(token)` → ejecuta con el payload del body.
+1. **Manual** → `POST /api/v1/workflows/:id/run` (body opcional `{ nodeId, inputData }`; si falta
+   `nodeId`, usa el primer `node:triggeronclick`).
+2. **Webhook** → `POST /hooks/:token` → `engine.resolveWebhook(token)` → el body se convierte en el
+   `inputData` (items) del run.
 3. **Cron** → `CronSchedulerAdapter` (tick `SCHEDULER_TICK_MS`) dispara los triggers vencidos.
 
-Cada ejecución crea un `WorkflowRun` (`status: running`) y el `RunPersistenceAdapter` va escribiendo
-los pasos vía los eventos del pipeline hasta el estado final.
+`startWorkflowRun` crea el `WorkflowRun` (`status: running`) y **lanza la ejecución en segundo plano**:
+responde `{ runId }` al instante y el avance llega por socket.io. Los eventos del pipeline se componen
+con `mergeRunEvents`: `RunPersistenceAdapter` (persiste cada paso y el `data`/runData final en Mongo) y
+`createRealtimeRunEvents` (emite a la room `workflow:{workflowId}`). `executeWorkflow` sigue disponible
+para ejecutar y esperar el resultado completo.
+
+### Tiempo real (socket.io)
+
+El API monta socket.io sobre el mismo `http.Server` (`setup/realtime/socketServer.ts`, `attachRealtime`
+en `index.ts`). La conexión se autentica con la cookie `cydo_access` y el cliente se une a la room del
+workflow con `workflow:subscribe` (se verifica que el workflow sea de la cuenta). Eventos:
+`run:started`, `node:started`, `node:completed`, `node:failed`, `run:finished`.
+
+En el webapp, `setup/socketSetup.ts` expone el socket único y `useWorkflowRunChannel(workflowId)`
+(`modules/workflow-flowchart`) conecta al abrir el editor, se suscribe a la room y traduce los eventos
+del run en el `activeNodeId` del canvas. Los eventos que llegan antes de conocer el `runId` se bufferizan.
+El hook también mantiene `executedNodes` (`success|error` por nodo): el nodo queda con un badge
+persistente al ejecutarse, y `clearExecuted` lo limpia —junto con su descendencia vía
+`collectDownstreamNodeIds`— cuando cambia su configuración.
+El botón **Ejecutar** usa `runWorkflowAction` (único que llama a `lib/api`) → `POST /run`, y luego
+`track(runId)`.
 
 Las cookies `cydo_access` / `cydo_refresh` son `httpOnly`; el interceptor de axios renueva la
 sesión de forma transparente ante un 401.

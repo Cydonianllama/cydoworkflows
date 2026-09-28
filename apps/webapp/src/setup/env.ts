@@ -2,6 +2,7 @@ import { z } from "zod"
 
 const envSchema = z.object({
   VITE_API_URL: z.string().min(1).default("http://localhost:4000/api/v1"),
+  VITE_SOCKET_URL: z.string().min(1).default("http://localhost:4000"),
   VITE_GOOGLE_CLIENT_ID: z.string().default(""),
 })
 

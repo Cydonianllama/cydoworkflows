@@ -32,6 +32,7 @@ export function FlowchartCanvas({
   className,
   executingNodeId = null,
   executingEdgeIds,
+  executedNodeStatus,
   onNodesChange,
   onEdgesChange,
   onConnect,
@@ -53,6 +54,7 @@ export function FlowchartCanvas({
             ? readNoteConfiguration(domain.configuration)
             : null
         const isExecuting = node.id === executingNodeId
+        const executionStatus = isNoteNode(node.type) ? undefined : executedNodeStatus?.[node.id]
 
         return {
           ...node,
@@ -64,21 +66,28 @@ export function FlowchartCanvas({
                 height: node.height ?? node.measured?.height ?? note.height,
               }
             : {}),
-          className: [
-            groupId ? "ring-2 ring-primary/70 rounded-lg" : undefined,
-            isNoteNode(node.type) ? "rounded-md" : undefined,
-            isExecuting ? "flowchart-node-executing" : undefined,
-          ]
-            .filter(Boolean)
-            .join(" ") || undefined,
+          className:
+            [
+              groupId ? "ring-2 ring-primary/70 rounded-lg" : undefined,
+              isNoteNode(node.type) ? "rounded-md" : undefined,
+              isExecuting ? "flowchart-node-executing" : undefined,
+              executionStatus === "error"
+                ? "flowchart-node-failed"
+                : executionStatus
+                  ? "flowchart-node-executed"
+                  : undefined,
+            ]
+              .filter(Boolean)
+              .join(" ") || undefined,
           data: {
             ...node.data,
             onDelete: onRemoveNode,
             executing: isExecuting,
+            executedStatus: isExecuting ? undefined : executionStatus,
           },
         }
       }),
-    [nodes, onRemoveNode, executingNodeId],
+    [nodes, onRemoveNode, executingNodeId, executedNodeStatus],
   )
 
   const edgesWithDelete = useMemo(

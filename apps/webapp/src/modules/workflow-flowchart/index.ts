@@ -11,7 +11,7 @@ export { NodeDialog } from "./components/NodeDialog/NodeDialog"
 export { NoteDialog } from "./components/NoteDialog/NoteDialog"
 export { FlowchartContextMenu } from "./components/FlowchartContextMenu/FlowchartContextMenu"
 export { ExecuteFlowButton } from "./components/ExecuteFlowButton/ExecuteFlowButton"
-export { useFlowExecution } from "./hooks/useFlowExecution"
+export { useWorkflowRunChannel } from "./hooks/useWorkflowRunChannel"
 export { listNodeDefinitions, getNodeDefinition } from "./nodes"
 export {
   renameNodeAction,

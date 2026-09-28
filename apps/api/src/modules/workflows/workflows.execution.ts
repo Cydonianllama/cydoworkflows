@@ -1,7 +1,8 @@
 import { AUTH_ERROR, AuthError } from "@cydo/auth"
-import type { RunResult, TriggerKind } from "@cydo/workflow-pipeline"
+import type { RunItems, RunResult, TriggerKind } from "@cydo/workflow-pipeline"
 import mongoose from "mongoose"
 import { cronScheduler, pipelineRunner, runPersistence } from "../../setup/container"
+import { createRealtimeRunEvents, mergeRunEvents } from "../../setup/realtime/runEvents"
 import type { GraphNodeAttrs } from "./workflows.graph.model"
 import { WorkflowModel } from "./workflows.model"
 import { WorkflowVersionModel } from "./workflows.version.model"
@@ -19,10 +20,37 @@ export interface WorkflowExecutionParams {
   workflowId: string
   version?: number
   trigger: WorkflowTriggerInput
+  inputData?: RunItems
+}
+
+export interface StartedWorkflowRun {
+  runId: string
 }
 
 export interface WorkflowExecutionResult extends RunResult {
   runId: string
+}
+
+interface PreparedWorkflowRun {
+  runId: string
+  workflowId: string
+  version: number
+  trigger: { kind: TriggerKind; nodeId: string; payload?: unknown }
+  inputData: RunItems
+  nodes: GraphNodeAttrs[]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Normaliza cualquier payload a items al estilo n8n. */
+function toRunItems(payload: unknown): RunItems {
+  if (Array.isArray(payload)) {
+    return payload.map((item) => ({ json: isRecord(item) ? item : { value: item } }))
+  }
+  if (isRecord(payload)) return [{ json: payload }]
+  return [{ json: {} }]
 }
 
 function toPipelineNode(node: GraphNodeAttrs) {
@@ -48,11 +76,10 @@ async function loadPublishedNodes(
 }
 
 /**
- * Ejecuta la versión publicada de un workflow desde el nodo de entrada.
- * Es el punto donde convergen engine (triggers) y pipeline (recorrido):
- * carga los nodos publicados y se los inyecta al runner.
+ * Valida el workflow publicado, resuelve el nodo de entrada y crea el
+ * `WorkflowRun` (status `running`) con su `inputData` inicial.
  */
-export async function executeWorkflow(params: WorkflowExecutionParams): Promise<WorkflowExecutionResult> {
+async function prepareWorkflowRun(params: WorkflowExecutionParams): Promise<PreparedWorkflowRun> {
   const workflow = await WorkflowModel.findOne({
     _id: new mongoose.Types.ObjectId(params.workflowId),
     ownerId: new mongoose.Types.ObjectId(params.ownerId),
@@ -84,33 +111,76 @@ export async function executeWorkflow(params: WorkflowExecutionParams): Promise<
     throw new AuthError(AUTH_ERROR.VALIDATION, `Nodo de entrada ${nodeId} no encontrado`)
   }
 
+  const inputData = params.inputData ?? toRunItems(params.trigger.payload)
   const runId = await runPersistence.createRun({
     workflowId: params.workflowId,
     ownerId: params.ownerId,
     version,
     trigger: { kind: params.trigger.kind, nodeId },
+    inputData,
   })
 
-  const result = await pipelineRunner.run(
+  return {
+    runId,
+    workflowId: params.workflowId,
+    version,
+    trigger: { kind: params.trigger.kind, nodeId, payload: params.trigger.payload },
+    inputData,
+    nodes,
+  }
+}
+
+/**
+ * Recorre la versión publicada con el pipeline. Los eventos del run se
+ * persisten en MongoDB y se emiten por socket.io a la room del workflow.
+ */
+async function runWorkflowExecution(prepared: PreparedWorkflowRun): Promise<RunResult> {
+  return pipelineRunner.run(
     {
-      nodes: nodes.map(toPipelineNode),
-      startNodeId: nodeId,
+      nodes: prepared.nodes.map(toPipelineNode),
+      startNodeId: prepared.trigger.nodeId,
       context: {
-        workflowId: params.workflowId,
-        version,
-        trigger: { kind: params.trigger.kind, nodeId, payload: params.trigger.payload },
-        variables: {},
+        workflowId: prepared.workflowId,
+        version: prepared.version,
+        trigger: prepared.trigger,
+        inputData: prepared.inputData,
       },
     },
-    runPersistence.createEvents(runId),
+    mergeRunEvents(
+      runPersistence.createEvents(prepared.runId),
+      createRealtimeRunEvents(prepared.runId, prepared.workflowId),
+    ),
   )
+}
 
-  return { runId, ...result }
+/**
+ * Dispara la ejecución en segundo plano: responde el `runId` apenas se crea
+ * el run y el avance llega por socket.io.
+ */
+export async function startWorkflowRun(
+  params: WorkflowExecutionParams,
+): Promise<StartedWorkflowRun> {
+  const prepared = await prepareWorkflowRun(params)
+  void runWorkflowExecution(prepared).catch((error: unknown) => {
+    console.error("[api] falló la ejecución del workflow", error)
+  })
+  return { runId: prepared.runId }
+}
+
+/**
+ * Ejecuta y espera el resultado completo (uso interno/tests).
+ */
+export async function executeWorkflow(
+  params: WorkflowExecutionParams,
+): Promise<WorkflowExecutionResult> {
+  const prepared = await prepareWorkflowRun(params)
+  const result = await runWorkflowExecution(prepared)
+  return { runId: prepared.runId, ...result }
 }
 
 export function startWorkflowRuntime(): void {
   cronScheduler.setHandler(async (registration) => {
-    await executeWorkflow({
+    await startWorkflowRun({
       ownerId: registration.ownerId,
       workflowId: registration.workflowId,
       version: registration.version,

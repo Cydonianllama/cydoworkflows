@@ -1,6 +1,7 @@
 import type { Edge, Node } from "@xyflow/react"
 import type { EdgeChange, NodeChange, Connection } from "@xyflow/react"
 import type { MouseEvent as ReactMouseEvent } from "react"
+import type { NodeExecutionStatus } from "../../nodes/types"
 
 export interface FlowchartCanvasProps {
   nodes: Node[]
@@ -9,6 +10,8 @@ export interface FlowchartCanvasProps {
   className?: string
   executingNodeId?: string | null
   executingEdgeIds?: ReadonlySet<string>
+  /** Estado persistente "ejecutado" por nodo (del último run). */
+  executedNodeStatus?: Record<string, NodeExecutionStatus>
   onNodesChange?: (changes: NodeChange[]) => void
   onEdgesChange?: (changes: EdgeChange[]) => void
   onConnect?: (connection: Connection) => void

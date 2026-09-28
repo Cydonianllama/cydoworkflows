@@ -1,4 +1,4 @@
-import { Loader2, Trash2 } from "lucide-react"
+import { Loader2, Play, Trash2 } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -28,6 +28,12 @@ export function WorkflowRow({ workflow, deleting = false, canDelete = true, onDe
         )}
       </TableCell>
       <TableCell className="text-muted-foreground">{formatDateTime(workflow.createdAt)}</TableCell>
+      <TableCell className="text-muted-foreground">
+        <span className="inline-flex items-center gap-1.5" title="Ejecuciones">
+          <Play className="h-3.5 w-3.5" />
+          {workflow.runsCount ?? 0}
+        </span>
+      </TableCell>
       <TableCell className="text-right">
         <Button
           variant="ghost"

@@ -13,7 +13,7 @@ function createContext(): RunContext {
     workflowId: "w1",
     version: 2,
     trigger: { kind: "manual", nodeId: "n1" },
-    variables: { input: "hola" },
+    inputData: [{ json: { input: "hola" } }],
   }
 }
 
@@ -189,9 +189,57 @@ describe("PipelineRunner eventos", () => {
 
   it("registra el output devuelto por el executor", async () => {
     const runner = new PipelineRunner({
-      "node:code": () => ({ output: { ok: true } }),
+      "node:code": () => ({ output: [{ json: { ok: true } }] }),
     })
     const result = await runner.run(createInput([node("a")], "a"))
-    expect(result.steps[0]!.output).toEqual({ ok: true })
+    expect(result.steps[0]!.output).toEqual([{ json: { ok: true } }])
+  })
+})
+
+describe("PipelineRunner datos (n8n)", () => {
+  it("pasa los items de entrada al nodo inicial y hace pass-through", async () => {
+    const runner = new PipelineRunner()
+    const result = await runner.run(createInput([node("a", "b"), node("b")], "a"))
+    expect(result.steps[0]!.input).toEqual([{ json: { input: "hola" } }])
+    expect(result.steps[0]!.output).toEqual([{ json: { input: "hola" } }])
+    expect(result.steps[1]!.input).toEqual([{ json: { input: "hola" } }])
+  })
+
+  it("propaga el output de un nodo como input del siguiente", async () => {
+    const registry: NodeExecutorRegistry = {
+      "node:code": (node) =>
+        node.id === "a"
+          ? { output: [{ json: { paso: "a" } }] }
+          : { output: [{ json: { paso: "b" } }] },
+    }
+    const runner = new PipelineRunner(registry)
+    const result = await runner.run(createInput([node("a", "b"), node("b")], "a"))
+    expect(result.steps[1]!.input).toEqual([{ json: { paso: "a" } }])
+    expect(result.steps[1]!.output).toEqual([{ json: { paso: "b" } }])
+  })
+
+  it("acumula las salidas de cada nodo en runData", async () => {
+    const registry: NodeExecutorRegistry = {
+      "node:code": (node) => ({ output: [{ json: { node: node.id } }] }),
+    }
+    const runner = new PipelineRunner(registry)
+    const result = await runner.run(createInput([node("a", "b"), node("b")], "a"))
+    expect(result.runData).toEqual({
+      a: [{ json: { node: "a" } }],
+      b: [{ json: { node: "b" } }],
+    })
+  })
+
+  it("expone las salidas previas al executor vía runData", async () => {
+    const seen: unknown[] = []
+    const registry: NodeExecutorRegistry = {
+      "node:code": (node, execution) => {
+        if (node.id === "b") seen.push(execution.runData.a)
+        return { output: [{ json: { node: node.id } }] }
+      },
+    }
+    const runner = new PipelineRunner(registry)
+    await runner.run(createInput([node("a", "b"), node("b")], "a"))
+    expect(seen).toEqual([[{ json: { node: "a" } }]])
   })
 })

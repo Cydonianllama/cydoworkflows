@@ -8,6 +8,11 @@ import { useEvent } from "@/lib/eventBus/useEvent"
 export function NotificationListener() {
   useEvent("workflow.created", ({ name }) => toast.success(`Workflow "${name}" creado`))
   useEvent("workflow.deleted", () => toast.success("Workflow eliminado"))
+  useEvent("workflow.run.started", () => toast.info("Ejecución iniciada"))
+  useEvent("workflow.run.finished", ({ status }) => {
+    if (status === "success") toast.success("Workflow ejecutado")
+    else toast.error(`La ejecución terminó con estado "${status}"`)
+  })
   useEvent("member.invited", ({ email }) => toast.success(`Invitación enviada a ${email}`))
   useEvent("member.removed", () => toast.info("Miembro eliminado"))
   useEvent("member.restricted", ({ restricted }) =>

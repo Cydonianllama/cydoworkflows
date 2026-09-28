@@ -16,3 +16,7 @@
 - `lib/api` is split per section (`auth`, `workflows`, ...) with one file per request plus DTO files, and shared `lib/types` for response envelopes. Confidence: 0.8
 - Top-level `layout/` holds the app's main aside and header. Confidence: 0.7
 - Reusable cross-module components live in the top-level `components/` (with `components/ui` for shadcn). Confidence: 0.7
+- Wants real feature logic to execute server-side (background/async) rather than simulated in the browser: the client should send a request, get an id back immediately, and act as a thin viewer. Confidence: 0.65
+- Prefers real-time progress pushed from the API over WebSocket (socket.io rooms, reusing the existing session cookie for auth) instead of polling, with the client subscribing when the relevant editor/screen mounts. Confidence: 0.6
+- Wants execution/run data persisted in the database and threaded from run to run (seed input carried between executions), and built as an extensible base even before the features that edit that data exist. Confidence: 0.6
+- When an upstream node's configuration changes, its cached execution state — and that of the whole downstream graph (BFS over edges, cycle-safe) — must be invalidated as stale, not just the edited entity. Confidence: 0.6

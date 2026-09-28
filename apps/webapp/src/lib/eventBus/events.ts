@@ -14,6 +14,12 @@ export interface AppEvents {
   "workflow.deleted": { workflowId: string }
   "workflow.graph.saved": { workflowId: string; nodeCount: number }
   "workflow.published": { workflowId: string; version: number }
+  "workflow.run.started": { workflowId: string; runId: string }
+  "workflow.run.finished": {
+    workflowId: string
+    runId: string
+    status: "success" | "failed" | "limit" | "cancelled"
+  }
 
   "member.invited": { email: string; role: "admin" | "member" }
   "member.removed": { memberId: string }

@@ -3,6 +3,8 @@ import { PIPELINE_ERROR } from "../core/errors"
 import type {
   NodeExecutorRegistry,
   PipelineInput,
+  RunData,
+  RunItems,
   RunResult,
   RunStatus,
   RunStep,
@@ -12,9 +14,12 @@ import { DEFAULT_RUNNER_OPTIONS } from "../core/types"
 
 /**
  * Recorre el grafo a partir del nodo de entrada usando una cola FIFO
- * con conjunto de visitados (misma semántica que la simulación del front:
- * `useFlowExecution`). Los executors de cada tipo de nodo se inyectan
+ * con conjunto de visitados. Los executors de cada tipo de nodo se inyectan
  * por DI: sin executor registrado el nodo se saltea y se sigue por `nextNode`.
+ *
+ * Los datos fluyen al estilo n8n: cada nodo recibe `input` (los items que
+ * devolvió el nodo anterior) y devuelve `output`; sin output explícito los
+ * items de entrada pasan de largo. Todas las salidas se acumulan en `runData`.
  */
 export class PipelineRunner {
   private readonly registry: NodeExecutorRegistry
@@ -38,6 +43,10 @@ export class PipelineRunner {
     const visited = new Set<string>()
     const queue: string[] = [input.startNodeId]
     const steps: RunStep[] = []
+    const runData: RunData = {}
+    const inputsByNodeId = new Map<string, RunItems>([
+      [input.startNodeId, input.context.inputData],
+    ])
 
     let status: RunStatus = "success"
     let error: string | null = null
@@ -67,21 +76,28 @@ export class PipelineRunner {
       }
 
       visited.add(nodeId)
+      const nodeInput = inputsByNodeId.get(nodeId) ?? []
       const stepStartedAt = new Date()
       await events.onNodeStart?.({ nodeId, type: node.type, startedAt: stepStartedAt })
 
       let stepError: string | null = null
-      let stepOutput: unknown = null
+      let stepOutput: RunItems = nodeInput
       try {
         const executor = this.registry[node.type]
         const result = await executor?.(node, {
           context: input.context,
+          input: nodeInput,
+          runData,
           signal: abortSignal,
         })
-        stepOutput = result?.output ?? null
+        stepOutput = result?.output ?? nodeInput
+        runData[nodeId] = stepOutput
         const nextNodeIds = result?.nextNodeIds ?? (node.nextNode ? [node.nextNode] : [])
         for (const nextId of nextNodeIds) {
-          if (!visited.has(nextId)) queue.push(nextId)
+          if (!visited.has(nextId)) {
+            inputsByNodeId.set(nextId, stepOutput)
+            queue.push(nextId)
+          }
         }
       } catch (executionError) {
         stepError =
@@ -96,6 +112,7 @@ export class PipelineRunner {
         status: stepError ? "error" : "success",
         startedAt: stepStartedAt,
         finishedAt: new Date(),
+        input: nodeInput,
         output: stepOutput,
         error: stepError,
       }
@@ -118,6 +135,7 @@ export class PipelineRunner {
       error,
       startedAt,
       finishedAt: new Date(),
+      runData,
     }
     await events.onRunFinish?.(result)
     return result

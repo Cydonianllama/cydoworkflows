@@ -20,7 +20,7 @@ const mockedList = vi.mocked(listWorkflowsRequest)
 const mockedCreate = vi.mocked(createWorkflowRequest)
 const mockedDelete = vi.mocked(deleteWorkflowRequest)
 
-const workflow = (id: string, name: string): WorkflowDTO => ({
+const workflow = (id: string, name: string, runsCount = 0): WorkflowDTO => ({
   id,
   name,
   createdAt: "2026-01-01T00:00:00.000Z",
@@ -29,6 +29,7 @@ const workflow = (id: string, name: string): WorkflowDTO => ({
   version: 0,
   publishedAt: null,
   hasUnpublishedChanges: false,
+  runsCount,
 })
 
 const pagination = {
@@ -56,7 +57,7 @@ describe("useWorkflowsActions", () => {
   it("carga y guarda los workflows cuando la respuesta es válida", async () => {
     mockedList.mockResolvedValue({
       status: true,
-      data: { items: [workflow("w1", "Alta de clientes")] },
+      data: { items: [workflow("w1", "Alta de clientes", 4)] },
       pagination,
     })
 
@@ -68,6 +69,7 @@ describe("useWorkflowsActions", () => {
 
     expect(result.current.store.items).toHaveLength(1)
     expect(result.current.store.items[0]?.name).toBe("Alta de clientes")
+    expect(result.current.store.items[0]?.runsCount).toBe(4)
     expect(result.current.store.pagination?.total).toBe(1)
     expect(result.current.store.loading).toBe(false)
   })

@@ -10,7 +10,9 @@ import {
   deleteWorkflowHandler,
   getWorkflowGraphHandler,
   getWorkflowHandler,
+  getWorkflowRunHandler,
   getWorkflowVersionHandler,
+  listWorkflowRunsHandler,
   listWorkflowVersionsHandler,
   listWorkflowsHandler,
   publishWorkflowHandler,
@@ -22,12 +24,14 @@ import {
 } from "./workflows.controller"
 import {
   createWorkflowSchema,
+  listWorkflowRunsQuerySchema,
   listWorkflowVersionsQuerySchema,
   listWorkflowsQuerySchema,
   runWorkflowSchema,
   saveWorkflowGraphSchema,
   updateWorkflowSchema,
   workflowIdParamSchema,
+  workflowRunParamSchema,
   workflowVersionParamSchema,
 } from "./workflows.dto"
 
@@ -97,6 +101,21 @@ workflowsRouter.post(
   validate(workflowIdParamSchema, "params"),
   validate(runWorkflowSchema),
   asyncHandler(runWorkflowHandler),
+)
+
+workflowsRouter.get(
+  "/:id/runs",
+  requirePermission("workflow:read"),
+  validate(workflowIdParamSchema, "params"),
+  validate(listWorkflowRunsQuerySchema, "query"),
+  asyncHandler(listWorkflowRunsHandler),
+)
+
+workflowsRouter.get(
+  "/:id/runs/:runId",
+  requirePermission("workflow:read"),
+  validate(workflowRunParamSchema, "params"),
+  asyncHandler(getWorkflowRunHandler),
 )
 
 workflowsRouter.get(

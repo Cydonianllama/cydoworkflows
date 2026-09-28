@@ -9,6 +9,8 @@ export interface WorkflowDTO {
   version: number
   publishedAt: string | null
   hasUnpublishedChanges: boolean
+  /** Cantidad de ejecuciones. Lo incluye el listado. */
+  runsCount?: number
 }
 
 /* POST /workflows */
@@ -144,4 +146,19 @@ export interface GetWorkflowVersionResponseDTO {
 export interface RestoreWorkflowResponseDTO {
   graph: WorkflowGraphDTO
   workflow: WorkflowDTO
+}
+
+/* POST /workflows/:id/run */
+export interface RunItemDTO {
+  json: Record<string, unknown>
+  binary?: Record<string, unknown>
+}
+
+export interface RunWorkflowRequestDTO {
+  nodeId?: string
+  inputData?: RunItemDTO[]
+}
+
+export interface RunWorkflowResponseDTO {
+  runId: string
 }
